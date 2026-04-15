@@ -322,10 +322,28 @@ public class SpriteFont
         if (FontType.VARIABLE_WIDTH.equals(config.getFontType()) && c == ' ')
         {
             Rectangle spaceBounds = characterBounds.get(c);
+            if (spaceBounds == null)
+            {
+                // Defensive fallback: always represent the space character so
+                // callers that read `.width` never see a null. Width is derived
+                // from the configured space width percentage of a sprite cell.
+                spaceBounds = new Rectangle(0, 0, 0, sprites.getSprite(config).getSpriteHeight());
+                characterBounds.put(c, spaceBounds);
+            }
             spaceBounds.width = (int) (sprites.getSprite(config).getSpriteWidth() * (config.getSpaceWidth() / 100.0f));
         }
 
-        return characterBounds.get(c);
+        Rectangle bounds = characterBounds.get(c);
+        if (bounds == null)
+        {
+            // Ensure getCharacterBounds never returns null to callers at
+            // SpriteFont:157, :164, :617 that dereference `.width` directly.
+            final int fallbackHeight = sprites.getSprite(config).getSpriteHeight();
+            final int fallbackWidth = sprites.getSprite(config).getSpriteWidth();
+            bounds = new Rectangle(0, 0, fallbackWidth, fallbackHeight);
+            characterBounds.put(c, bounds);
+        }
+        return bounds;
     }
 
     /**

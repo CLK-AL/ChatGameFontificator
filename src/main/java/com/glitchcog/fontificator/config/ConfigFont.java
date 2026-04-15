@@ -369,7 +369,7 @@ public class ConfigFont extends Config
     public void setBaselineOffset(int baselineOffset)
     {
         this.baselineOffset = baselineOffset;
-        props.getProperty(FontificatorProperties.KEY_FONT_BASELINE_OFFSET, Integer.toString(baselineOffset));
+        props.setProperty(FontificatorProperties.KEY_FONT_BASELINE_OFFSET, Integer.toString(baselineOffset));
     }
 
     public String getCharacterKey()

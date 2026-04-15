@@ -57,6 +57,25 @@ Critical + five Major bugs all reproducible without a display.
 
 ---
 
+## 0.5 Roadmap stages (delivery checkpoints)
+
+| # | Stage | What lands | UI / CLI state |
+| --- | --- | --- | --- |
+| S0 | **Baseline** (✅ complete) | Review docs, `.sdkmanrc`, Maven + Gradle dual build, `gradle/libs.versions.toml`, `INTEGRATION.md` (vendored-subset stub). | — |
+| S1 | **Red-then-green Critical fixes** (✅ complete) | 3 Kotlin red-tests + 3 Java fixes (C1 `setBaselineOffset`, C2 duplicated `w > 0`, C3 `getCharacterBounds` null). `mvn test` + `./gradlew test` both green. | Swing window stays untouched — it's the future test oracle. |
+| S2 | **Phase B coverage drive** (**next**) | JaCoCo 100 % line + branch on Option-C packages (`com.glitchcog.fontificator.sprite.**` + `.config.**`). Remaining Majors/Minors from `CODE_REVIEW.md` closed. | **Swing `UiDriver` `actual` lands.** Drives `ChatWindow` / `MessagePanel` via off-screen `BufferedImage` + `Graphics2D` + AssertJ-Swing. ARGB hashes committed under `testdata/snapshots/swing/**` — Swing becomes the pinning oracle. |
+| S3 | **Freeze** — tag `legacy-v1` | CODEOWNERS read-only on `src/main/java/**`; CI diff-check guard. | Swing oracle hashes frozen. |
+| S4 | **Phase D** — port to `commonMain` | Per-subsystem Kotlin port (order: `Config.baseValidation` → `ConfigFont` → `SpriteCharacterKey` → `SpriteFont` → `Sprite`). Same Kotlin tests run twice (Java + Kotlin). Kover 100 % + Pitest ≥ 85 % per module. | Swing actual still the only UI. `UiDriver`-driven tests keep passing against Swing regardless of the logic swap underneath. |
+| S5 | **Phase E.1** — Compose Desktop host | `ui-compose-desktop` with `Canvas2D` = Skiko `actual`, `ComposeDesktopUiDriver` `actual`. | **Green renderer joins the matrix.** Every `UiDriver` test runs under both Swing (blue) and Compose Desktop (green) with ARGB-hash parity gate. |
+| S6 | **Phase E.2** — Compose Web (wasmJs) | `ui-compose-html` host; `ComposeWebUiDriver` `actual` (Compose test-renderer + Playwright Kotlin nightly ARGB grab). | Three renderers; one suite; one hash set. |
+| S7 | **Phase F** — Dual CI/CD release | `profile=java` → ProGuarded Swing app. `profile=kmp` → klibs, Compose Desktop signed bundle (native-image via `org.graalvm.buildtools.native` 0.10.6), Web site. `verifyProguardedJar` gates both. Swing actual retained for N releases before retirement. | — |
+
+See [`../fonts-bitsnpicas/docs/diagrams/08-ui-driver-expect-actual.puml`](../fonts-bitsnpicas/docs/diagrams/08-ui-driver-expect-actual.puml)
+— the `UiDriver` architecture is host-wide; this repo's vendored
+subset (`modules/sprite/`, `modules/chat-preview/`) plugs into it.
+
+---
+
 ## 1. Toolchain — SDKMAN + Gradle version catalog
 
 Every number below was verified against `sdk list` or Maven Central
@@ -146,11 +165,40 @@ proguard             = { id = "com.guardsquare.proguard",           version.ref 
 graalvm-native       = { id = "org.graalvm.buildtools.native",      version.ref = "graalvm" }
 ```
 
-### 1.3 JBang
+### 1.3 JBang — also the CLI runtime
 
-JBang scripts under `testdata/gen/*.kt` generate synthetic sprite
-sheets, canned chat logs, and malformed `.properties` fixtures.
-`jbang testdata/gen/BadConfig.kt` — one command, no project setup.
+JBang (from `.sdkmanrc`) has **two** roles:
+
+1. **Corpus generators** under `testdata/gen/*.kt` build synthetic
+   sprite sheets, canned chat logs, and malformed `.properties`
+   fixtures. `jbang testdata/gen/BadConfig.kt` — one command, no
+   project setup.
+
+2. **CLI entry points.** Any command-line tooling for the chat
+   renderer (e.g. "render canned chat log + sprite sheet to PNG")
+   migrates to a **JBang script in Kotlin using Clikt 4.4.0**, with
+   `//DEPS` and `//SOURCES` directives:
+
+   ```kotlin
+   ///usr/bin/env jbang "$0" "$@" ; exit $?
+   //KOTLIN 2.3.20
+   //DEPS com.github.ajalt.clikt:clikt-jvm:4.4.0
+   //DEPS io.github.thisrepo:chatgamefontificator-sprite:<version>
+   //SOURCES cli/RenderChat.kt
+
+   fun main(args: Array<String>) = RenderChat().main(args)
+   ```
+
+   The same sources are aggregated into Gradle `modules/cli` for
+   ProGuarded fat JARs and GraalVM `native-image` binaries in
+   Stage S7. For details on JBang capabilities verified on this
+   branch (including the Clikt 4.x vs 5.x quirk and native-image
+   `-N --initialize-at-run-time=...` requirement for Mordant), see
+   the host plan at
+   [`../fonts-bitsnpicas/MIGRATION_PLAN.md` §1.3](../fonts-bitsnpicas/MIGRATION_PLAN.md).
+
+   **Scope limit**: JBang is JVM-only. Kotlin/Native, JS, wasmJs
+   targets come from the Gradle build in Stage S4+, not JBang.
 
 ---
 
@@ -191,14 +239,23 @@ ChatGameFontificator/
 | --- | --- | --- | --- |
 | Unit | `commonTest` / `jvmTest` | `kotlin.test` | java, kmp |
 | Integration | `jvmTest` | JUnit 5 | java, kmp |
-| UI (Swing legacy) | `ui-swing:jvmTest` | AssertJ-Swing | java, kmp |
-| UI (Desktop) | `ui-compose-desktop:jvmTest` | Compose UI test | kmp |
-| UI (Web) | `ui-compose-html:wasmJsTest` | Compose Web test | kmp |
+| **UI (common, expect/actual)** | `modules/ui-shared/commonTest` | `kotlin.test` driving `UiDriver` (Swing `actual` from S2, Compose Desktop from S5, Compose Web from S6) | java (Swing only), kmp (all three) |
 | API / contract | `jvmTest` / `jsTest` | JUnit 5 / kotlin.test | kmp |
 | E2E (Web) | `e2e-web` | Playwright Kotlin | kmp |
 | E2E (Desktop) | `e2e-desktop` | Compose UI test + Robot | kmp |
 | Load / perf | `benchmarks` | `kotlinx-benchmark` | java, kmp |
 | Fuzz | `jvmTest` | Jazzer | java, kmp |
+
+### §3.6 UI parity tier (`UiDriver` expect/actual)
+
+One `commonTest` suite drives every renderer through an
+`expect class UiDriver`. Three `actual`s: **Swing = blue =
+pinning oracle** (lands at S2, retained through S7);
+**Compose Desktop = green** (lands at S5); **Compose Web =
+green** (lands at S6). ARGB-hash parity gate on every CI run.
+Divergence fails build with `(renderer, test, expected, actual)`.
+
+See [`../fonts-bitsnpicas/docs/diagrams/08-ui-driver-expect-actual.puml`](../fonts-bitsnpicas/docs/diagrams/08-ui-driver-expect-actual.puml).
 
 Under `profile=java`, tests drive the Swing/Graphics2D-backed
 `Canvas2D` actual. Under `profile=kmp`, tests drive **both** —
@@ -262,8 +319,15 @@ SpriteCharacterKey, SpriteFont, Sprite):
 
 ## 5. 100 % coverage gates (both profiles)
 
-- **Profile `java`**: JaCoCo `minimum = 1.0` on line + branch across
-  `src/main/java/**`. Required to enter Phase C.
+- **Profile `java`** (Option-C scope): JaCoCo `minimum = 1.0` on
+  line + branch on `com.glitchcog.fontificator.sprite.**` +
+  `com.glitchcog.fontificator.config.**` (the packages vendored
+  into `modules/sprite` / `modules/chat-preview` per
+  [`INTEGRATION.md`](INTEGRATION.md)). Swing window chrome, Twitch
+  IRC, preset manager etc. are **compiled** (to host the Swing
+  `UiDriver` oracle) but **excluded** from the 100 % gate —
+  pinned by snapshot hash instead (§3.6). Required to enter
+  Stage S3 (freeze).
 - **Profile `kmp`**: Kover `minBound = 100`; Pitest ≥ 85 %.
 - UI source sets gated ≥ 90 % (adapter glue excluded).
 

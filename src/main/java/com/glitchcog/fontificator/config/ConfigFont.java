@@ -155,7 +155,7 @@ public class ConfigFont extends Config
         {
             int w = Integer.parseInt(widthStr);
             int h = Integer.parseInt(heightStr);
-            if (w > 0 && w > 0)
+            if (w > 0 && h > 0)
             {
                 if (w * h != charKey.length())
                 {

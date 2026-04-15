@@ -1,13 +1,23 @@
 # Migration Plan: ChatGameFontificator → Kotlin / KMP / Gradle
 
 Execution companion to [`CODE_REVIEW.md`](CODE_REVIEW.md) and
-[`TEST_REVIEW.md`](TEST_REVIEW.md). Converts every review finding into
-a **failing** Kotlin test (TDD), drives the repository to 100 %
-Kotlin coverage on JVM, then migrates production code to
-**Kotlin Multiplatform `commonMain`**. The existing Java Swing app
-stays buildable (legacy reference); a new Compose Desktop host plus a
-Compose HTML / wasmJs web UI are introduced, and CI/CD runs in dual
-`java-legacy` / `kmp` mode.
+[`TEST_REVIEW.md`](TEST_REVIEW.md). Drives every review finding through
+a strict **fix-then-freeze-then-port** cycle:
+
+1. Author Kotlin TDD tests that fail against today's Java code.
+2. **Fix the Java code** until every test is green and JVM coverage
+   reaches 100 % line + branch (stabilise).
+3. **Freeze** the now-stable Java sources and tag them `legacy-v1`.
+4. **Migrate** the frozen Java logic to pure Kotlin Multiplatform
+   (`commonMain`), reusing the *same* Kotlin test suite — which now
+   runs against both the frozen Java and the new Kotlin
+   implementations as a differential parity gate.
+
+Two CI/CD profiles (`java`, `kmp`) run on every PR throughout; both
+apply ProGuard to release artefacts. See
+[`INTEGRATION.md`](INTEGRATION.md) for how this repo's
+sprite-font + chat-overlay logic is vendored into the
+`fonts-bitsnpicas`-hosted font studio.
 
 ChatGameFontificator is the highest-leverage of the three repos: no
 tests exist today, recent commits (`83155b4`) document a class of
@@ -18,297 +28,373 @@ Critical + five Major bugs all reproducible without a display.
 
 ## 0. Guiding principles
 
-1. **Legacy Java is frozen.** `src/main/java/com/glitchcog/fontificator/**`
-   stays untouched. It ships on the legacy release channel via the
-   existing `pom.xml`.
-2. **Strict TDD.** Every `CODE_REVIEW.md` finding is encoded as a
-   failing Kotlin test *before* any Kotlin code ships. Each failing
-   test is authored against a thin JVM delegate over the frozen Java
-   classes, goes green only after the Kotlin re-implementation lands.
-3. **100 % Kotlin coverage before KMP migration.** A subsystem moves
-   from `jvmMain` (Java-delegating) to `commonMain` (pure KMP) only
-   when Kover reports 100 % line + branch coverage and mutation
-   coverage ≥ 85 %.
-4. **Dual UI hosts.** The existing Swing chat window is preserved
-   (adapted to Kotlin view-models) as the JVM UI; a new
-   Compose Desktop host plus a Compose HTML / wasmJs host drive
-   the same `commonMain` render pipeline.
-5. **Dual CI/CD.** Two GitHub Actions workflows per PR:
-   `java-legacy` (Maven, JDK 8) and `kmp` (Gradle, JDK 21, KMP
-   matrix).
+1. **TDD, strictly.** Every finding becomes a red Kotlin test *before*
+   any production code changes.
+2. **Java is stabilised first, then frozen.** Fix the Java code until
+   the Kotlin tests pass and JaCoCo reports 100 %. Every fix commit
+   cites its `CODE_REVIEW.md` finding ID. Only then does the Java
+   tree become read-only.
+3. **Shared test suite across Java and Kotlin.** Tests target a
+   platform-neutral `ChatFontIo` + `SpriteRendererIo` interface with
+   two `actual`s — a JVM adapter over frozen Java, and pure Kotlin in
+   `commonMain`. Same `@Test` methods run against both.
+4. **100 % coverage at every transition.** JaCoCo at freeze; Kover +
+   Pitest before a subsystem migrates to pure `commonMain`.
+5. **Dual CI/CD profiles.** Gradle profiles `-Pprofile=java` and
+   `-Pprofile=kmp`. Every PR runs both. Both ProGuard-shrink
+   release JARs and verify post-shrink.
+6. **Skiko-first rendering.** JetBrains Skiko (the Skia layer that
+   powers Compose Multiplatform) becomes the primary graphics
+   engine. Today's `Graphics2D` calls are wrapped behind a
+   platform-neutral `Canvas2D` that has a Swing-backed `actual` for
+   the legacy profile and a Skiko-backed `actual` for the KMP
+   profile. Skia already contains HarfBuzz + FreeType + SVG — so
+   FontBox / FreeType / HarfBuzz4J become *optional* fallbacks
+   rather than core dependencies.
+7. **Reproducible toolchain via SDKMAN.** Contributors and CI consume
+   the exact same JDK / Kotlin / Gradle / JBang versions from
+   `.sdkmanrc`, pinned to the **latest stable** at migration time.
 
 ---
 
-## 1. Repository layout after migration
+## 1. Toolchain — SDKMAN + Gradle version catalog
+
+Every number below was verified against `sdk list` or Maven Central
+at commit time. The whole table is driven by two files:
+`.sdkmanrc` (JDK / Kotlin / Gradle / JBang) and
+`gradle/libs.versions.toml` (everything else).
+
+| Concern | Choice (verified latest stable) |
+| --- | --- |
+| JDK           | Oracle GraalVM **25.0.2-graal** — both profiles |
+| Kotlin        | **2.3.20** — K2, multiplatform plugin |
+| Gradle        | **9.4.1** — Kotlin DSL + version catalog |
+| JBang         | **0.138.0** |
+| Test          | `kotlin.test` + JUnit **5.12.2** + Kotest **5.9.1** |
+| Coverage      | Kover **0.9.1** (KMP), JaCoCo (Java), 100 % line + branch |
+| Mutation      | Pitest Gradle **1.15.0** / core **1.19.1**, ≥ 85 % |
+| UI (Swing)    | Retained; Kotlin view-models behind legacy window |
+| UI (Desktop)  | Compose Multiplatform **1.8.2** (Skiko-backed) |
+| UI (Web)      | Compose for Web (wasmJs), Compose **1.8.2** |
+| Graphics      | Skiko **0.9.18** (Skia layer with HarfBuzz + FreeType + SVG) |
+| Chat IRC      | Ktor **3.2.0** client with JVM + JS engines |
+| Static        | Detekt **1.23.8**, ktlint-gradle **12.3.0** |
+| Fuzz          | Jazzer **0.24.0** |
+| Bench         | `kotlinx-benchmark` runtime **0.4.14** + JMH |
+| Shrink        | ProGuard Gradle **7.7.0** + `verifyProguardedJar` |
+| Native        | `org.graalvm.buildtools.native` **0.10.6** |
+| CI            | GitHub Actions `{ubuntu,macos,windows}-latest` via `sdk env` |
+
+
+### 1.1 `.sdkmanrc`
+
+```
+# Pinned to the latest 2026 stable; bumped by a single renovate/dependabot PR.
+java=25.0.2-graal            # Oracle GraalVM for JDK 25 LTS (SDKMAN `graal` distro; native-image + PGO for KMP native targets)
+kotlin=2.3.20            # latest stable from `sdk list kotlin`
+gradle=9.4.1             # latest stable from `sdk list gradle`
+jbang=0.138.0            # latest stable from `sdk list jbang`
+```
+
+### 1.2 `gradle/libs.versions.toml`
+
+Latest 2026 stable at adoption time; Renovate/Dependabot keep the
+file fresh.
+
+```toml
+[versions]
+# All versions below verified against Maven Central on the day of
+# this commit. Renovate/Dependabot keep them fresh.
+kotlin         = "2.3.20"               # matches `.sdkmanrc`
+coroutines     = "1.10.2"
+serialization  = "1.9.0"
+ktor           = "3.2.0"
+kover          = "0.9.1"
+pitestGradle   = "1.15.0"
+pitestCore     = "1.19.1"
+kotest         = "5.9.1"                # 6.x is milestones
+junit          = "5.12.2"               # 5.13.x is milestones
+jazzer         = "0.24.0"
+detekt         = "1.23.8"
+ktlintGradle   = "12.3.0"
+ktlintCore     = "1.6.0"
+compose        = "1.8.2"                # pulls Skiko as a transitive; 1.9.x is alpha
+skiko          = "0.9.18"               # also usable standalone on the java profile
+benchmarks     = "0.4.14"
+proguard       = "7.7.0"
+graalvmPlugin  = "0.10.6"               # org.graalvm.buildtools.native plugin
+
+[libraries]
+kotlin-test        = { module = "org.jetbrains.kotlin:kotlin-test",          version.ref = "kotlin" }
+skiko-jvm          = { module = "org.jetbrains.skiko:skiko-awt",             version.ref = "skiko" }
+skiko-jvm-linux    = { module = "org.jetbrains.skiko:skiko-awt-runtime-linux-x64",   version.ref = "skiko" }
+skiko-jvm-mac      = { module = "org.jetbrains.skiko:skiko-awt-runtime-macos-arm64", version.ref = "skiko" }
+skiko-jvm-win      = { module = "org.jetbrains.skiko:skiko-awt-runtime-windows-x64", version.ref = "skiko" }
+kotest-property    = { module = "io.kotest:kotest-property",                 version.ref = "kotest" }
+junit-jupiter      = { module = "org.junit.jupiter:junit-jupiter",           version.ref = "junit" }
+jazzer             = { module = "com.code-intelligence:jazzer-junit",        version.ref = "jazzer" }
+
+[plugins]
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kover                = { id = "org.jetbrains.kotlinx.kover",        version.ref = "kover" }
+pitest               = { id = "info.solidsoft.pitest",              version.ref = "pitest" }
+detekt               = { id = "io.gitlab.arturbosch.detekt",        version.ref = "detekt" }
+ktlint               = { id = "org.jlleitschuh.gradle.ktlint",      version.ref = "ktlint" }
+compose              = { id = "org.jetbrains.compose",              version.ref = "compose" }
+benchmarks           = { id = "org.jetbrains.kotlinx.benchmark",    version.ref = "benchmarks" }
+proguard             = { id = "com.guardsquare.proguard",           version.ref = "proguard" }
+graalvm-native       = { id = "org.graalvm.buildtools.native",      version.ref = "graalvm" }
+```
+
+### 1.3 JBang
+
+JBang scripts under `testdata/gen/*.kt` generate synthetic sprite
+sheets, canned chat logs, and malformed `.properties` fixtures.
+`jbang testdata/gen/BadConfig.kt` — one command, no project setup.
+
+---
+
+## 2. Repository layout after migration
 
 ```
 ChatGameFontificator/
-├── src/main/java/com/glitchcog/fontificator/**     ← legacy Java (frozen)
-├── src/main/resources/**                            ← shared assets
-├── pom.xml                                           ← legacy Maven build
+├── .sdkmanrc
+├── gradle/libs.versions.toml
 ├── settings.gradle.kts
 ├── build.gradle.kts
+├── pom.xml                                      ← retained (legacy profile)
+├── src/main/java/com/glitchcog/fontificator/**  ← Java (stabilised in B; frozen at C)
+├── src/test/kotlin/com/glitchcog/fontificator/**← NEW: Kotlin tests reused by both profiles
 ├── kmp/
-│   ├── core/                                         ← render + config + sprite logic
-│   │   ├── src/commonMain/kotlin/…
-│   │   ├── src/commonTest/kotlin/…
-│   │   ├── src/jvmMain/kotlin/…                      ← Java-delegate adapters + Swing interop
-│   │   ├── src/jvmTest/kotlin/…
-│   │   ├── src/jsMain/kotlin/…                       ← Canvas + Fetch adapters
-│   │   ├── src/wasmJsMain/kotlin/…
-│   │   └── src/nativeMain/kotlin/…
-│   ├── chat/                                         ← Twitch IRC client (KMP) with expect/actual
-│   ├── ui-swing/                                     ← adapted legacy Swing UI (view-models in KT)
-│   ├── ui-compose-desktop/                           ← new Compose Desktop host
-│   ├── ui-compose-html/                              ← new Compose for Web host
-│   └── ui-shared/                                    ← shared Compose components
-├── testdata/                                         ← sprite sheets + configs + sample chats
-├── .github/workflows/
-│   ├── java-legacy.yml
-│   └── kmp.yml
+│   ├── core/        (Config, Sprite, SpriteFont, SpriteCharacterKey → commonMain)
+│   ├── chat/        (Twitch IRC via Ktor; expect/actual engines)
+│   ├── renderer/    (Canvas2D abstraction + Skiko + Swing actuals)
+│   ├── ui-swing/    (legacy Swing host, Kotlin view-models)
+│   ├── ui-compose-desktop/
+│   ├── ui-compose-html/
+│   └── ui-shared/
+├── proguard/
+│   ├── proguard-rules-common.pro
+│   ├── proguard-rules-java.pro
+│   └── proguard-rules-kmp.pro
+├── testdata/
+└── .github/workflows/
+    ├── java.yml
+    └── kmp.yml
 ```
 
-Maven is authoritative for the legacy Swing build; Gradle owns KMP.
-
 ---
 
-## 2. Toolchain
+## 3. Test strategy across every level
 
-| Concern | Choice |
-| --- | --- |
-| Build          | Gradle 8.x Kotlin DSL, `gradle/libs.versions.toml` |
-| Kotlin         | 2.x K2, multiplatform plugin (JVM / JS / wasmJs / Native) |
-| Test framework | `kotlin.test` (common), JUnit 5 Jupiter (JVM), Kotest property |
-| Coverage       | Kover 0.8.x, `minBound = 100` on line + branch for `commonMain` |
-| Mutation       | Pitest on JVM, ≥ 85 % |
-| Property tests | Kotest `property` for config + sprite geometry |
-| Snapshot       | `compose-snapshot-testing` for Compose components; `javax.imageio` diff for `BufferedImage` |
-| Static         | Detekt + ktlint; SpotBugs retained for legacy Java only |
-| Fuzz           | Jazzer on `Config.baseValidation` + properties loader |
-| UI (Desktop)   | Compose Multiplatform Desktop |
-| UI (Web)       | Compose for Web wasmJs |
-| UI (Legacy)    | Swing (retained, driven by Kotlin view-models) |
-| Chat IRC       | Ktor client + OkHttp engine on JVM, Ktor JS engine on browser |
-| Load / perf    | `kotlinx-benchmark` + JMH |
-| E2E            | Playwright Kotlin for web, Compose Desktop UI test for desktop |
-
----
-
-## 3. Test strategy — every level
-
-| Level | Source set | Runner | Scope |
+| Level | Source set | Runner | Profile(s) |
 | --- | --- | --- | --- |
-| Unit | `commonTest` / `jvmTest` | `kotlin.test` | Config parsing, `SpriteCharacterKey`, `SpriteFont` geometry |
-| Integration | `jvmTest` | JUnit 5 | `.properties` round-trip, sprite-sheet → `CharacterBounds` map |
-| UI (Swing) | `ui-swing:jvmTest` | AssertJ Swing | Legacy `ChatWindow` renders a canned message |
-| UI (Desktop) | `ui-compose-desktop:jvmTest` | Compose UI test | Compose host renders canned chat, reacts to config change |
-| UI (Web) | `ui-compose-html:wasmJsTest` | Compose Web test renderer | DOM snapshot of canned chat |
-| API (contract) | `jvmTest` / `jsTest` | JUnit 5 | Public `ConfigFont`, `SpriteFont`, renderer surfaces |
-| E2E (Web) | `e2e-web` | Playwright Kotlin | Drives published static site |
-| E2E (Desktop) | `e2e-desktop` | Compose UI test + Robot | Drives the Compose Desktop app against a mocked Twitch feed |
-| Load / perf | `benchmarks` | `kotlinx-benchmark` | `draw` throughput at 60 Hz simulation |
-| Fuzz | `jvmTest` | Jazzer | Random `.properties` into `Config.baseValidation` |
+| Unit | `commonTest` / `jvmTest` | `kotlin.test` | java, kmp |
+| Integration | `jvmTest` | JUnit 5 | java, kmp |
+| UI (Swing legacy) | `ui-swing:jvmTest` | AssertJ-Swing | java, kmp |
+| UI (Desktop) | `ui-compose-desktop:jvmTest` | Compose UI test | kmp |
+| UI (Web) | `ui-compose-html:wasmJsTest` | Compose Web test | kmp |
+| API / contract | `jvmTest` / `jsTest` | JUnit 5 / kotlin.test | kmp |
+| E2E (Web) | `e2e-web` | Playwright Kotlin | kmp |
+| E2E (Desktop) | `e2e-desktop` | Compose UI test + Robot | kmp |
+| Load / perf | `benchmarks` | `kotlinx-benchmark` | java, kmp |
+| Fuzz | `jvmTest` | Jazzer | java, kmp |
+
+Under `profile=java`, tests drive the Swing/Graphics2D-backed
+`Canvas2D` actual. Under `profile=kmp`, tests drive **both** —
+Swing-backed (legacy parity) and Skiko-backed (new renderer) — with
+ARGB-hash differential assertions.
 
 ---
 
-## 4. TDD test plan — one failing test per `CODE_REVIEW.md` finding
+## 4. TDD test plan — failing tests first, fix Java, then port
 
-Every test is first authored **red** against `…JavaAdapter` delegates
-calling the legacy Java classes. The red test proves the bug
-reproduces. The same test goes green once the pure-Kotlin
-`commonMain` implementation lands.
-
-### 4.1 Critical (red first, then green after Kotlin fix)
+### 4.1 One failing Kotlin test per `CODE_REVIEW.md` finding
 
 | Finding | Failing Kotlin test |
 | --- | --- |
-| 1. `setBaselineOffset` uses `getProperty` | `ConfigFontRoundTripTest.`​`set_baseline_offset_persists_to_properties()` |
-| 2. `w > 0 && w > 0` instead of `h > 0` | `ConfigFontValidationTest.`​`invalid_grid_height_fails_validation()` |
-| 3. `getCharacterBounds` returns `null` but callers deref | `SpriteFontBoundsTest.`​`unknown_codepoint_returns_fallback_not_NPE()` |
+| C1. `setBaselineOffset` uses `getProperty` | `ConfigFontRoundTripTest.set_baseline_offset_persists_to_properties()` |
+| C2. `w > 0 && w > 0` | `ConfigFontValidationTest.invalid_grid_height_fails_validation()` |
+| C3. `getCharacterBounds` → null deref | `SpriteFontBoundsTest.unknown_codepoint_returns_fallback_not_NPE()` |
+| M4. Bitwise `&` in `isBadge` | `SpriteCharacterKeyTest.isBadge_uses_short_circuit_evaluation()` |
+| M5. `indexOf(c)` loses duplicates | `SpriteFontGeometryTest.duplicate_character_in_key_resolves_to_correct_position()` |
+| M6. `Graphics` leak in `setImage` | `SpriteResourceTest.setImage_does_not_leak_graphics_instances()` *(jvmTest)* |
+| M7. `letterIndex` overrun | `SpriteFontGeometryTest.mismatched_grid_dimensions_report_error_not_SIOOBE()` |
+| M8. Zero-width variable glyph | `SpriteFontGeometryTest.empty_variable_width_glyph_keeps_min_advance_1()` |
+| m9. Whitespace-in-config bug-class | `ConfigBaseValidationTest.single_space_value_accepted_when_key_allows_it()` — **pins commit `83155b4`** + two sibling cases (`unknown_char = " "`, `divider = " "`, `empty_rejected`). |
+| m12. Color cache growth | `SpriteColorCacheTest.colored_cache_bounded_to_N_entries()` |
 
-### 4.2 Major
+### 4.2 Strict authoring order
 
-| Finding | Failing Kotlin test |
-| --- | --- |
-| 4. Bitwise `&` in `isBadge` | `SpriteCharacterKeyTest.`​`isBadge_uses_short_circuit_evaluation()` (equality test vs reference) |
-| 5. `indexOf(c)` loses duplicate characters | `SpriteFontGeometryTest.`​`duplicate_character_in_key_resolves_to_correct_position()` |
-| 6. `Graphics` leak in `Sprite.setImage` | `SpriteResourceTest.`​`setImage_does_not_leak_graphics_instances()` (JVM-only, uses `Toolkit` leak probe) |
-| 7. `letterIndex` overrun | `SpriteFontGeometryTest.`​`mismatched_grid_dimensions_report_error_not_SIOOBE()` |
-| 8. Variable-width glyph zero width | `SpriteFontGeometryTest.`​`empty_variable_width_glyph_keeps_min_advance_1()` |
+For each subsystem `S` (Config.baseValidation, ConfigFont,
+SpriteCharacterKey, SpriteFont, Sprite):
 
-### 4.3 Minor + Nit
+1. **Red (Phase A).** Commit Kotlin tests against `…JavaAdapter`
+   over the legacy class. CI shows red under `-Pprofile=java`.
+2. **Fix Java to green (Phase B).** Edit
+   `src/main/java/com/glitchcog/fontificator/**` one finding at a
+   time; each commit cites the finding ID.
+3. **Freeze (Phase C).** Tag `legacy-v1`, CODEOWNERS + CI guard.
+4. **Port (Phase D).** Author `commonMain` Kotlin. Same Kotlin
+   tests now run against both implementations.
+5. **Differential ARGB parity gate.** For every `(sprite sheet,
+   canned message)` fixture, render with both the legacy
+   Swing/Graphics2D pipeline and the Skiko pipeline, compare
+   SHA-256 of ARGB pixel bytes.
+6. Retire the JavaAdapter from `jvmMain`; frozen Java stays.
 
-- `ConfigBaseValidationTest.single_space_value_accepted_when_key_allows_it()`
-  (regression pin for the `83155b4` commit).
-- `SpriteColorCacheTest.colored_cache_bounded_to_N_entries()`.
-- `SpriteFontGeometryTest.character_bounds_cache_returns_same_instance_for_common_ascii()`.
+### 4.3 Test corpus
 
-### 4.4 Test sequencing
-
-For each subsystem `S` (ConfigFont, ConfigMessage,
-`Config.baseValidation`, SpriteFont, SpriteCharacterKey, Sprite):
-
-1. **JVM delegate** in `jvmMain`: `class ${S}JavaAdapter` wrapping
-   the legacy class.
-2. **Red tests** from §4.1–4.3 authored against the adapter — CI
-   must show them red.
-3. **Pinning tests** for current correct behaviour (mostly around
-   `calculateFixedCharacterDimensions`, `drawCharacter` output
-   images).
-4. **`commonMain` implementation** of `S`.
-5. **Differential image tests:** for a fixture sprite sheet +
-   fixture message, render a `BufferedImage` (JVM) / `ImageBitmap`
-   (common) with both paths, compare via SHA-256 of ARGB pixel
-   bytes.
-6. Kover 100 % gate.
-7. Delete JVM delegate for `S`.
-
-### 4.5 Test corpus
-
-- `testdata/configs/good/*.properties` — a handful of the shipped
-  presets (one fixed-width font, one variable-width font,
-  one emoji-bearing config).
-- `testdata/configs/bad/*.properties` — missing-key, blank-value,
-  space-as-divider (the `83155b4` regression fixture),
-  grid-mismatch, oversized grid.
-- `testdata/sprites/**` — 3 small sprite sheets (8×8, variable
-  width, duplicate character in key).
-- `testdata/chats/*.jsonl` — canned IRC messages with emoji, emotes,
-  badges, zero-width joiners.
-- `testdata/snapshots/**` — expected ARGB hashes + PNG renders for
-  diff debugging.
+- `testdata/configs/good/*.properties` — presets covering fixed &
+  variable-width, emoji-bearing, space-as-divider.
+- `testdata/configs/bad/*.properties` — the `83155b4` regression
+  fixture plus missing-key, blank-value, grid-mismatch,
+  oversized-grid.
+- `testdata/sprites/**` — 8×8 fixed, variable-width, duplicate-char-
+  in-key, empty-glyph.
+- `testdata/chats/*.jsonl` — canned IRC messages with emoji,
+  emotes, badges, ZWJ sequences.
+- `testdata/snapshots/**` — expected ARGB SHA-256 hashes per
+  (config, message) pair, plus the PNG itself for diff debugging.
+- `testdata/gen/*.kt` — JBang generators.
 
 ---
 
-## 5. 100 % Kotlin coverage gate
+## 5. 100 % coverage gates (both profiles)
 
-- `koverVerify { rule { bound { minValue = 100; metric = LINE };
-   bound { minValue = 100; metric = BRANCH } } }` on every
-  `commonMain` and `*Main` source set except UI.
-- UI modules gated at ≥ 90 % line coverage (UI-testable code only;
-  Swing-adapter glue excluded).
-- Pitest ≥ 85 % mutation on `commonMain` + `jvmMain`.
-- No coverage exceptions in Kotlin; where coverage is impossible
-  (platform-native code), split into platform source set with its
-  own 100 % gate or explicit `@Expect`/`@Actual` contract test.
+- **Profile `java`**: JaCoCo `minimum = 1.0` on line + branch across
+  `src/main/java/**`. Required to enter Phase C.
+- **Profile `kmp`**: Kover `minBound = 100`; Pitest ≥ 85 %.
+- UI source sets gated ≥ 90 % (adapter glue excluded).
 
 ---
 
 ## 6. Migration phases
 
-### Phase A — scaffolding (1 PR)
+### Phase A — Toolchain + red tests
 
-- Land Gradle KMP root alongside `pom.xml`.
-- Version catalog + both CI workflows.
-- Gate: both lanes green on empty Kotlin module.
+- Commit `.sdkmanrc`, `gradle/libs.versions.toml`,
+  `build.gradle.kts` with profiles `-Pprofile=java` / `-Pprofile=kmp`.
+- `.github/workflows/{java,kmp}.yml`.
+- Introduce `ChatFontIo`, `SpriteRendererIo`, `Canvas2D` interfaces
+  + `JavaAdapter` + `SwingCanvas2D` actuals.
+- Commit Kotlin TDD tests from §4.1 — **they fail on CI**.
+- Gate: `profile=java` red on purpose; `profile=kmp` green on empty
+  module.
 
-### Phase B — Legacy-delegate + first tests (1 PR)
+### Phase B — Fix Java to green + 100 % JaCoCo
 
-- `jvmMain` adapters over every Config / Sprite class.
-- Commit minimal `testdata/`.
-- Pin current behaviour with Kotlin tests (no assertions on the
-  critical-bug paths yet).
-- Add JUnit 5 via Gradle so `surefire` isn't needed.
-- Gate: all pinning tests green on Java delegate.
+- Fix one finding per commit; commit subjects reference finding IDs.
+- Expand corpus until JaCoCo ≥ 100 %.
+- Gate: `profile=java` green, JaCoCo 100 %, all `CODE_REVIEW.md`
+  findings closed.
 
-### Phase C — TDD fixes, one subsystem per PR
+### Phase C — Freeze Java
 
-Priority order reflecting user impact:
+- Tag `legacy-v1`. CODEOWNERS + CI diff-check enforce read-only on
+  `src/main/java/**`.
 
-1. `Config.baseValidation` (regression pin for `83155b4`, and red
-   tests for the whitespace class of bug).
-2. `ConfigFont` (critical #1 and #2 — setter persistence, height
-   validation).
-3. `SpriteCharacterKey` (major #4 — bitwise vs logical).
-4. `SpriteFont` geometry (critical #3, majors #5 #7 #8).
-5. `Sprite` (major #6 — graphics leak; plus cache eviction).
+### Phase D — Port to `commonMain`
 
-Each PR:
+Priority:
 
-a. Adds **red** negative tests in `commonTest` / `jvmTest`.
-b. Adds `commonMain` Kotlin replacement.
-c. Turns the tests green; differential image suite must match legacy
-   output except for the specific fixed bugs.
-d. Raises Kover gate on the subsystem to 100 %.
-e. Deletes the JVM delegate.
+1. `Config.baseValidation` (pin `83155b4` + whitespace-class bug).
+2. `ConfigFont` (C1, C2).
+3. `SpriteCharacterKey` (M4).
+4. `SpriteFont` geometry (C3, M5, M7, M8).
+5. `Sprite` (M6 + cache eviction).
 
-### Phase D — UI migration (three tracks, in parallel once Phase C
-stabilises)
+Per subsystem: add `commonMain` Kotlin, wire `KotlinAdapter`, run
+shared test suite against both. Differential ARGB parity must hold
+on corpus.
 
-- **`ui-swing/`** — extract view-models from the Swing event handlers
-  into Kotlin. Swing window stays; it now observes a
-  `StateFlow<ChatViewState>` driven by `commonMain`.
-- **`ui-compose-desktop/`** — new host built with Compose
-  Multiplatform Desktop; reuses `ui-shared/` Compose components
-  (`MessageRow`, `SpriteCharacter`, `BadgeIcon`).
-- **`ui-compose-html/`** — Compose for Web wasmJs host serving the
-  same `ui-shared/` composables.
+### Phase E — UI migration (Skiko + three hosts)
+
+- **`renderer/`** — `Canvas2D` common interface with two actuals:
+  - `SwingCanvas2D` (legacy) — wraps `java.awt.Graphics2D`.
+  - `SkikoCanvas2D` (new) — wraps `org.jetbrains.skiko.Surface`
+    and `Canvas`. Same API; Skiko gives OpenGL / Metal / Direct3D /
+    wasm backends out of the box.
+- **`ui-swing/`** — Kotlin view-models behind the legacy `ChatWindow`;
+  Swing host observes a `StateFlow<ChatViewState>`.
+- **`ui-compose-desktop/`** — Compose Multiplatform host using
+  `Canvas` composable. Skiko renders the sprite font natively.
+- **`ui-compose-html/`** — Compose for Web wasmJs host. Same
+  composable. Same Skiko renderer (browser-side).
 - **UI tests**:
-  - Swing: AssertJ-Swing asserts window contains the rendered text.
-  - Desktop: Compose UI test asserts a rendered `MessageRow` DOM
-    tree + ARGB snapshot of `ChatCanvas`.
-  - Web: Compose Web test renderer asserts the DOM tree; Playwright
-    Kotlin drives the deployed site against a mocked Twitch
-    WebSocket.
+  - Swing: AssertJ-Swing asserts rendered text.
+  - Desktop: Compose UI test + ARGB snapshot of `ChatCanvas`.
+  - Web: Compose Web test renderer asserts DOM; Playwright Kotlin
+    E2E drives the deployed site against a mocked Twitch WebSocket.
 
-### Phase E — E2E + load/perf
+### Phase F — Dual CI/CD + release (with ProGuard)
 
-- `e2e-desktop` runs the Compose Desktop host against a fake Twitch
-  IRC server emitting canned messages; asserts final canvas pixel
-  hash.
-- `e2e-web` runs Playwright Kotlin against the deployed
-  `ui-compose-html` site.
-- `benchmarks/` JMH gates for 60 Hz render throughput across
-  1 / 10 / 100 concurrent messages; baseline committed; ±10 %
-  regression threshold.
+- **`profile=java`** workflow: `sdk env`, then
+  `./gradlew -Pprofile=java check jacocoTestCoverageVerification
+  proguardRelease verifyProguardedJar`. Publishes a ProGuard-shrunk
+  classic Swing JAR (`chatgamefontificator-legacy-*`).
+- **`profile=kmp`** workflow: `sdk env`, then
+  `./gradlew -Pprofile=kmp build koverVerify pitest proguardRelease
+  verifyProguardedJar packageReleaseDistribution`. Publishes:
+  - `chatgamefontificator-core-*` klibs (JVM / JS / wasmJs / Native)
+  - `chatgamefontificator-desktop` Compose signed bundle
+    (DMG / MSI / AppImage) via Compose's ProGuard integration
+  - `chatgamefontificator-web` static site (GitHub Pages)
+- **ProGuard rules** (`proguard/*.pro`):
+  - `common` — `kotlinx-serialization`, Skiko JNI entry points,
+    service-loader, Compose `@Composable` metadata.
+  - `java` — Swing reflection (`UIManager`, custom look-and-feel),
+    Twitch IRC-client reflective field lookups.
+  - `kmp` — Coroutines, Compose runtime, `@JvmStatic`.
+- **`verifyProguardedJar`** runs the full JUnit 5 + UI test suite
+  against the shrunk artefact on a separate classpath.
+- `mapping.txt` uploaded as CI artefact; attached to GitHub release.
 
-### Phase F — Dual CI/CD + release
-
-- **`java-legacy`** workflow: `mvn -B verify`; publishes the classic
-  Swing JAR (retained, installable). No Java sources modified since
-  Phase A.
-- **`kmp`** workflow: `./gradlew build`; publishes:
-  - `chatgamefontificator-core` klibs (JVM / JS / wasmJs / Native).
-  - `chatgamefontificator-desktop` signed bundle
-    (Compose Desktop DMG / MSI / AppImage).
-  - `chatgamefontificator-web` static site (GitHub Pages).
-- Tag-driven release runs both lanes; legacy channel has
-  `-legacy` suffix.
+Both workflows run on every PR and every tag.
 
 ---
 
 ## 7. Acceptance criteria
 
-1. Every `CODE_REVIEW.md` finding has a **named** Kotlin test whose
-   Git history shows it merged **red**, then **green** after the
-   Kotlin replacement (`git log --follow` on the test file).
-2. `./gradlew koverVerify` reports 100 % line + branch on every
-   non-UI Kotlin module.
-3. `./gradlew pitestReport` ≥ 85 % on `commonMain` + `jvmMain`.
-4. Differential image suite: byte-exact ARGB parity with legacy
-   Swing renderer for the committed corpus (minus the specific
-   fixed-bug divergences).
-5. The whitespace-config bug-class from commit `83155b4` is covered
-   by at least three distinct tests
-   (`unknown_char = " "`, `divider = " "`, `empty_string_rejected`).
-6. `java-legacy` lane green on every PR; no file under
-   `src/main/java/**` modified since Phase A.
-7. `kmp` lane green on {ubuntu, macos, windows} × {jvm, js, wasmJs,
-   native}; Compose Web site builds and deploys to GitHub Pages.
+1. Every `CODE_REVIEW.md` finding has a named Kotlin test whose Git
+   history shows **red → green** across Phase A → B, and **still
+   green** at Phase D running against both Swing- and Skiko-backed
+   `Canvas2D`.
+2. The `83155b4` whitespace-config bug-class is covered by **three**
+   dedicated tests (`unknown_char = " "`, `divider = " "`,
+   `empty_rejected`).
+3. Phase B closes with JaCoCo 100 % line + branch.
+4. Phase C tags `legacy-v1`; no post-tag commit touches
+   `src/main/java/**` (CI-enforced).
+5. Phase D closes with Kover 100 % + Pitest ≥ 85 %.
+6. Differential ARGB parity holds for the committed sprite/chat
+   corpus between Swing and Skiko renderers (minus documented
+   divergences).
+7. `profile=java` + `profile=kmp` green on every PR across
+   {ubuntu, macos, windows}; `kmp` also green across {jvm, js,
+   wasmJs, native}.
+8. ProGuard-shrunk JAR passes the full test suite in
+   `verifyProguardedJar` on every release.
+9. `.sdkmanrc` + `libs.versions.toml` track the latest stable
+   toolchain.
 
 ---
 
 ## 8. Deliverables
 
-- Gradle KMP root + version catalog + `libs.versions.toml`.
-- `kmp/core/` with `commonMain/Test`, `jvmMain/Test`, `jsMain/Test`,
-  `wasmJsMain/Test`, `nativeMain/Test`.
-- `kmp/chat/` KMP Twitch IRC client with JVM / JS engines.
-- `kmp/ui-swing/` — Kotlin view-models over the retained Swing UI.
-- `kmp/ui-compose-desktop/`, `kmp/ui-compose-html/`,
-  `kmp/ui-shared/`.
-- `testdata/` corpus (configs, sprites, chats, snapshot hashes).
-- `.github/workflows/java-legacy.yml`, `kmp.yml`.
-- `TEST_PLAN.md` auto-generated mapping `CODE_REVIEW.md` finding →
-  test FQN.
+- `.sdkmanrc`, `gradle/libs.versions.toml`, `build.gradle.kts` with
+  both profiles.
+- `ChatFontIo`, `SpriteRendererIo`, `Canvas2D` interfaces +
+  `JavaAdapter` / `KotlinAdapter` actuals + `SwingCanvas2D` /
+  `SkikoCanvas2D` actuals.
+- `kmp/core/`, `chat/`, `renderer/`, `ui-swing/`,
+  `ui-compose-desktop/`, `ui-compose-html/`, `ui-shared/`.
+- `proguard/*.pro`.
+- `testdata/` corpus (configs, sprites, chats, snapshots) + JBang
+  generators.
+- `.github/workflows/{java,kmp}.yml` both running ProGuard +
+  post-shrink verification.
+- `TEST_PLAN.md` auto-generated mapping findings → test FQN.
 - `benchmarks/baselines/*.json`.
+- [`INTEGRATION.md`](INTEGRATION.md) — how sprite / chat logic is
+  vendored into the `fonts-bitsnpicas`-hosted font studio.

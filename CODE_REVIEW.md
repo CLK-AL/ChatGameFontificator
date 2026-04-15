@@ -237,3 +237,19 @@ with inner `text[c]` access.
    configs.
 3. Close the `Graphics` leak in `Sprite.setImage` (#6); it's a tiny change
    with outsized reliability impact.
+
+---
+
+## Remediation plan (KMP / Gradle / TDD)
+
+Every finding above is scheduled for a failing Kotlin test and a
+`commonMain` Kotlin re-implementation in
+[`MIGRATION_PLAN.md`](MIGRATION_PLAN.md). The legacy Java code in
+`src/main/java/com/glitchcog/fontificator/**` is **not** patched — it
+stays frozen as the reference Swing implementation and keeps shipping
+via the `java-legacy` release channel. Each finding has a named
+Kotlin test in §4 of the migration plan that first fails against the
+legacy Java delegate and then passes against the new Kotlin
+implementation, with 100 % Kover coverage and byte-exact differential
+parity against the legacy Swing renderer (ARGB pixel-hash) as the
+merge gate.

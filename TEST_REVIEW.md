@@ -192,3 +192,29 @@ This repository stands to benefit the most from adding tests: it has
 real user-visible bugs documented in its commit history
 (`83155b4`) and in `CODE_REVIEW.md`, and the bulk of its logic is
 pure and eminently testable once a JUnit harness is in place.
+
+---
+
+## Execution plan (KMP / Gradle / TDD / 100 % coverage)
+
+The concrete execution lives in
+[`MIGRATION_PLAN.md`](MIGRATION_PLAN.md). In short:
+
+- Each test level (unit, integration, UI, API, E2E, load, fuzz) is
+  wired to a dedicated Gradle KMP source set (§3 of the plan).
+- Every `CODE_REVIEW.md` finding becomes one named Kotlin test in
+  `commonTest` / `jvmTest`, authored **red** against a JVM delegate
+  over the legacy Java class (§4 of the plan).
+- The `83155b4` whitespace-config regression is pinned by at least
+  three dedicated Kotlin tests (`unknown_char = " "`,
+  `divider = " "`, `empty_rejected`).
+- UI testing is done at three levels: Swing (AssertJ-Swing against
+  the retained legacy window), Compose Desktop (Compose UI test),
+  and Compose for Web wasmJs (Compose Web test renderer +
+  Playwright Kotlin E2E).
+- 100 % Kotlin line + branch coverage (Kover) and ≥ 85 % mutation
+  coverage (Pitest) are enforced per subsystem before that subsystem
+  moves from `jvmMain` (Java delegate) to pure `commonMain`.
+- Legacy Java under `src/main/java/**` stays frozen; dual
+  `java-legacy` (Maven) and `kmp` (Gradle, JVM/JS/wasmJs/Native)
+  CI lanes both stay green on every PR.

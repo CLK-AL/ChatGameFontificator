@@ -1,0 +1,22 @@
+[versions]
+kotlin = "2.3.20"
+junit = "5.10.2"
+log4j = "1.2.17"
+pircbot = "1.5.0"
+gson = "2.3.1"
+jasypt = "1.9.0"
+
+[libraries]
+log4j            = { module = "log4j:log4j",                                   version.ref = "log4j" }
+pircbot          = { module = "pircbot:pircbot",                               version.ref = "pircbot" }
+gson             = { module = "com.google.code.gson:gson",                     version.ref = "gson" }
+jasypt           = { module = "org.jasypt:jasypt",                             version.ref = "jasypt" }
+
+kotlin-stdlib      = { module = "org.jetbrains.kotlin:kotlin-stdlib",          version.ref = "kotlin" }
+kotlin-test        = { module = "org.jetbrains.kotlin:kotlin-test",            version.ref = "kotlin" }
+kotlin-test-junit5 = { module = "org.jetbrains.kotlin:kotlin-test-junit5",     version.ref = "kotlin" }
+junit-jupiter           = { module = "org.junit.jupiter:junit-jupiter",        version.ref = "junit" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

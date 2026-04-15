@@ -1,0 +1,10 @@
+# Stage S3 freeze (`legacy-v1`) — the legacy Java source tree is
+# read-only. CI enforces this via freeze-guard.yml.
+#
+# The Kotlin/KMP port happens in the fonts-bitsnpicas host:
+#   - modules/sprite/        (com.glitchcog.fontificator.sprite.**)
+#   - modules/chat-preview/  (com.glitchcog.fontificator subset)
+#   - modules/core/          (config.baseValidation generic validator)
+# Edits here are not the path forward — patch the KMP modules instead.
+
+src/main/java/**                           @legacy-frozen

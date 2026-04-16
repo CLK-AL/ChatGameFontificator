@@ -1,5 +1,7 @@
 package com.glitchcog.fontificator.core
 
+import com.glitchcog.fontificator.config.ConfigFont as JavaConfigFont
+import com.glitchcog.fontificator.config.FontType as JavaFontType
 import com.glitchcog.fontificator.emoji.LazyLoadEmoji
 import com.glitchcog.fontificator.sprite.SpriteCharacterKey as JavaSpriteCharacterKey
 
@@ -45,4 +47,29 @@ public object JavaLegacyAdapter {
         } else {
             SpriteCharacterKey(k.emoji, k.isBadge())
         }
+
+    /**
+     * Convert a frozen-Java `ConfigFont` into the commonMain
+     * immutable `ConfigFont` by reading every field via Java getters.
+     */
+    public fun configFontFromJava(javaConfig: JavaConfigFont): ConfigFont =
+        ConfigFont(
+            fontFilename = javaConfig.fontFilename,
+            borderFilename = javaConfig.borderFilename,
+            gridWidth = javaConfig.gridWidth,
+            gridHeight = javaConfig.gridHeight,
+            fontScale = javaConfig.fontScale,
+            borderScale = javaConfig.borderScale,
+            borderInsetX = javaConfig.borderInsetX,
+            borderInsetY = javaConfig.borderInsetY,
+            spaceWidth = javaConfig.spaceWidth,
+            baselineOffset = javaConfig.baselineOffset,
+            characterKey = javaConfig.characterKey,
+            unknownChar = javaConfig.unknownChar,
+            extendedCharEnabled = javaConfig.isExtendedCharEnabled,
+            lineSpacing = javaConfig.lineSpacing,
+            charSpacing = javaConfig.charSpacing,
+            messageSpacing = javaConfig.messageSpacing,
+            fontType = FontType.valueOf(javaConfig.fontType.name),
+        )
 }

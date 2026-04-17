@@ -1,6 +1,9 @@
 package com.glitchcog.fontificator.core
 
 import com.glitchcog.fontificator.config.Config as JavaConfig
+import com.glitchcog.fontificator.config.ConfigCensor as JavaConfigCensor
+import com.glitchcog.fontificator.config.ConfigChat as JavaConfigChat
+import com.glitchcog.fontificator.config.ConfigColor as JavaConfigColor
 import com.glitchcog.fontificator.config.ConfigFont as JavaConfigFont
 import com.glitchcog.fontificator.config.ConfigMessage as JavaConfigMessage
 import com.glitchcog.fontificator.config.FontType as JavaFontType
@@ -13,6 +16,7 @@ import com.glitchcog.fontificator.sprite.Sprite as JavaSprite
 import com.glitchcog.fontificator.sprite.SpriteCache as JavaSpriteCache
 import com.glitchcog.fontificator.sprite.SpriteCharacterKey as JavaSpriteCharacterKey
 import com.glitchcog.fontificator.sprite.SpriteFont as JavaSpriteFont
+import java.awt.Color
 import java.awt.Rectangle
 import java.awt.image.BufferedImage
 import java.util.Properties
@@ -360,4 +364,90 @@ public object JavaLegacyAdapter {
         @Suppress("UNCHECKED_CAST")
         return allocate.invoke(unsafe, type) as T
     }
+
+    // --- ConfigChat adapter (Stage S4) -----------------------------------
+
+    /**
+     * Convert a frozen-Java `ConfigChat` into the commonMain
+     * immutable [ConfigChat] by reading every field via Java getters.
+     *
+     * The `java.awt.Rectangle` chroma border is decomposed into four
+     * ints (`left = x`, `top = y`, `right = width`, `bottom = height`),
+     * matching how the Java class (ab)uses Rectangle fields.
+     */
+    public fun configChatFromJava(javaChat: JavaConfigChat): ConfigChat {
+        val border = javaChat.chromaBorder
+        return ConfigChat(
+            scrollable = javaChat.isScrollable,
+            resizable = javaChat.isResizable,
+            rememberPosition = javaChat.isRememberPosition,
+            chatWindowPositionX = javaChat.chatWindowPositionX,
+            chatWindowPositionY = javaChat.chatWindowPositionY,
+            chatFromBottom = javaChat.isChatFromBottom,
+            width = javaChat.width ?: 550,
+            height = javaChat.height ?: 450,
+            windowWidth = javaChat.windowWidth,
+            windowHeight = javaChat.windowHeight,
+            chromaEnabled = javaChat.isChromaEnabled,
+            chromaInvert = javaChat.isChromaInvert,
+            chromaLeft = border?.x ?: 0,
+            chromaTop = border?.y ?: 0,
+            chromaRight = border?.width ?: 0,
+            chromaBottom = border?.height ?: 0,
+            chromaCornerRadius = javaChat.chromaCornerRadius,
+            reverseScrolling = javaChat.isReverseScrolling,
+            alwaysOnTop = javaChat.isAlwaysOnTop,
+            antiAlias = javaChat.isAntiAlias,
+        )
+    }
+
+    // --- ConfigColor adapter (Stage S4) ----------------------------------
+
+    /**
+     * Convert a `java.awt.Color` to the commonMain [ColorRGBA].
+     *
+     * Mapping: `Color.getRed/Green/Blue/Alpha` -> `ColorRGBA(r,g,b,a)`.
+     */
+    public fun colorFromJava(c: Color): ColorRGBA =
+        ColorRGBA(r = c.red, g = c.green, b = c.blue, a = c.alpha)
+
+    /**
+     * Convert a frozen-Java `ConfigColor` into the commonMain
+     * immutable [ConfigColor] by reading every field via Java getters.
+     */
+    public fun configColorFromJava(javaColor: JavaConfigColor): ConfigColor =
+        ConfigColor(
+            bgColor = colorFromJava(javaColor.bgColor),
+            fgColor = colorFromJava(javaColor.fgColor),
+            borderColor = colorFromJava(javaColor.borderColor),
+            highlight = colorFromJava(javaColor.highlight),
+            chromaColor = colorFromJava(javaColor.chromaColor),
+            palette = javaColor.palette.map { colorFromJava(it) },
+            colorUsername = javaColor.isColorUsername,
+            colorTimestamp = javaColor.isColorTimestamp,
+            colorMessage = javaColor.isColorMessage,
+            colorJoin = javaColor.isColorJoin,
+            useTwitchColors = javaColor.isUseTwitchColors,
+        )
+
+    // --- ConfigCensor adapter (Stage S4) ---------------------------------
+
+    /**
+     * Convert a frozen-Java `ConfigCensor` into the commonMain
+     * immutable [ConfigCensor] by reading every field via Java getters.
+     *
+     * Java `String[]` lists are converted to `List<String>`.
+     */
+    public fun configCensorFromJava(javaCensor: JavaConfigCensor): ConfigCensor =
+        ConfigCensor(
+            censorshipEnabled = javaCensor.isCensorshipEnabled,
+            purgeOnTwitchBan = javaCensor.isPurgeOnTwitchBan,
+            censorAllUrls = javaCensor.isCensorAllUrls,
+            censorFirstUrls = javaCensor.isCensorFirstUrls,
+            censorUnknownChars = javaCensor.isCensorUnknownChars,
+            unknownCharsPercent = javaCensor.unknownCharPercentage,
+            userWhitelist = javaCensor.userWhitelist?.toList() ?: emptyList(),
+            userBlacklist = javaCensor.userBlacklist?.toList() ?: emptyList(),
+            bannedWords = javaCensor.bannedWords?.toList() ?: emptyList(),
+        )
 }

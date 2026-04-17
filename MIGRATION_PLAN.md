@@ -76,6 +76,36 @@ subset (`modules/sprite/`, `modules/chat-preview/`) plugs into it.
 
 ---
 
+## 0.6 S4 port progress log
+
+All ports land under `modules/core/` with commonMain + jvmMain
+`JavaLegacyAdapter` + jvmTest differential-parity. Zero `java.*`
+imports in commonMain. `./gradlew :modules:core:check` and
+`mvn test` both green after every round.
+
+| Round | SHA | Port | commonMain surface added | Module tests | Parity |
+| --- | --- | --- | --- | --- | --- |
+| R1 | `2264a6a` + `6f3fc7f` | `SpriteCharacterKey` | Immutable port + `isBadge` using `&&` (carries M4 in commonMain even though frozen Java still has the bitwise `&`) | 25 | 7 field-exact |
+| R2 | `b0b124d` | `ConfigFont` | Immutable `data class` + `validate()` + `toProperties()/fromProperties()` — carries **C1** (setter persistence) + **C2** (`w > 0 && h > 0`) natively | 51 | 6 field-exact |
+| R3 | `a2b2dd6` | `Config.baseValidation` | `baseValidation(props, keys, spaceAllowedKeys)` — canonicalized whitespace-aware validator, pins `83155b4` fix | 74 | 10 error-list exact |
+| R4 | `7024250` | `SpriteFontGeometry` + `CharacterBounds` + `SpriteFontMetrics` | Pure-data geometry over `Array<IntArray>` ARGB matrix. Carries **M5** (loop index not `indexOf(c)`), **M7** (bounds on `letterIndex`), **C3** (fallback bounds for unknown codepoint) | 93 | 7 byte-exact |
+| R5 | *(in flight)* | `ConfigMessage` | Immutable `data class` + `validate()` + round-trip; reuses `baseValidation` with `spaceAllowedKeys = setOf(KEY_MESSAGE_CONTENT_BREAK)` | pending | pending |
+
+Fixes carried natively by the Kotlin ports:
+
+- **C1** — `ConfigFont.setBaselineOffset` writes to the property map (round-trip pins it).
+- **C2** — `ConfigFont.validate` guards `w > 0 && h > 0`.
+- **C3** — `SpriteFontGeometry.lookupBounds` returns cell-sized fallback.
+- **M4** — `SpriteCharacterKey.isBadge` uses `&&` (short-circuit).
+- **M5** — duplicate characters in the key map to distinct cells
+  (loop index vs `indexOf`).
+- **M7** — `letterIndex` is bounded against `key.length`.
+- **`83155b4` regression** — pinned by three dedicated
+  `BaseValidationTest` cases (`unknown_char = " "` accepted,
+  `divider = " "` accepted, empty-string rejected).
+
+---
+
 ## 1. Toolchain — SDKMAN + Gradle version catalog
 
 Every number below was verified against `sdk list` or Maven Central

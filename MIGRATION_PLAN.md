@@ -101,9 +101,37 @@ Fixes carried natively by the Kotlin ports:
 - **M5** — duplicate characters in the key map to distinct cells
   (loop index vs `indexOf`).
 - **M7** — `letterIndex` is bounded against `key.length`.
-- **`83155b4` regression** — pinned by three dedicated
+- **`83155b4` regression** — pinned permanently by three dedicated
   `BaseValidationTest` cases (`unknown_char = " "` accepted,
   `divider = " "` accepted, empty-string rejected).
+
+### S4 completion status: **LOGIC PORT — CONFIG + GEOMETRY COMPLETE** ✅
+
+After R6 (`23916e4`), all config classes and the sprite-font
+geometry layer are ported to `commonMain` pure Kotlin:
+
+- **Config layer**: `ConfigFont`, `ConfigMessage`, `ConfigChat`,
+  `ConfigColor`, `ConfigCensor`, `baseValidation` — all immutable
+  data classes with `validate()` + `toProperties()`/`fromProperties()`
+  round-trips. `ColorRGBA` replaces `java.awt.Color`.
+- **Geometry layer**: `SpriteCharacterKey`, `SpriteFontGeometry`
+  (`calculateFixedBounds` + `calculateVariableBounds` +
+  `lookupBounds`), `CharacterBounds`, `SpriteFontMetrics`.
+- **186 module tests** with 12+ JVM-parity field-exact assertions.
+
+**Remaining S4 follow-ups** (not blocking S5):
+
+- `Sprite` color cache (`coloredImgs` HashMap → bounded LRU).
+  Needs a `PixelSink` / `Canvas2D` abstraction — lands at S5.
+- Chat-preview renderer (`drawCharacter`, `drawMessage`).
+  Needs `Canvas2D` expect/actual — lands at S5 with the
+  `UiDriver` Swing actual.
+- `ConfigIrc`, `ConfigEmoji` — out of the integration scope
+  per INTEGRATION.md (IRC + emoji stay in this repo's legacy
+  standalone app).
+
+**Next milestone**: Stage S5 (Compose Desktop `UiDriver` actual +
+`Canvas2D` abstraction enabling the Sprite renderer port).
 
 ---
 

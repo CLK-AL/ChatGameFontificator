@@ -1,9 +1,12 @@
 package com.glitchcog.fontificator.core
 
+import com.glitchcog.fontificator.config.Config as JavaConfig
 import com.glitchcog.fontificator.config.ConfigFont as JavaConfigFont
 import com.glitchcog.fontificator.config.FontType as JavaFontType
+import com.glitchcog.fontificator.config.loadreport.LoadConfigReport
 import com.glitchcog.fontificator.emoji.LazyLoadEmoji
 import com.glitchcog.fontificator.sprite.SpriteCharacterKey as JavaSpriteCharacterKey
+import java.util.Properties
 
 /**
  * JVM-only adapters that bridge the frozen Java
@@ -72,4 +75,37 @@ public object JavaLegacyAdapter {
             messageSpacing = javaConfig.messageSpacing,
             fontType = FontType.valueOf(javaConfig.fontType.name),
         )
+
+    /**
+     * Call the frozen Java `Config.baseValidation(Properties, String[], LoadConfigReport)`
+     * and return the collected error messages as a plain list.
+     *
+     * Because `baseValidation` is `protected` on the abstract `Config`,
+     * we use a minimal concrete subclass ([ConfigBridge]) that exposes
+     * the method.
+     */
+    public fun baseValidationViaJava(
+        props: Map<String, String>,
+        keys: List<String>,
+    ): List<String> {
+        val javaProps = Properties()
+        for ((k, v) in props) {
+            javaProps.setProperty(k, v)
+        }
+        val report = LoadConfigReport()
+        ConfigBridge().callBaseValidation(javaProps, keys.toTypedArray(), report)
+        return report.messages.toList()
+    }
+
+    /**
+     * Minimal concrete [JavaConfig] used only to surface the
+     * `protected baseValidation` method for parity testing.
+     */
+    private class ConfigBridge : JavaConfig() {
+        fun callBaseValidation(props: Properties, keys: Array<String>, report: LoadConfigReport): LoadConfigReport =
+            baseValidation(props, keys, report)
+
+        override fun load(props: Properties, report: LoadConfigReport): LoadConfigReport = report
+        override fun reset() {}
+    }
 }

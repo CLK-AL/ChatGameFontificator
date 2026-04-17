@@ -89,7 +89,7 @@ imports in commonMain. `./gradlew :modules:core:check` and
 | R2 | `b0b124d` | `ConfigFont` | Immutable `data class` + `validate()` + `toProperties()/fromProperties()` — carries **C1** (setter persistence) + **C2** (`w > 0 && h > 0`) natively | 51 | 6 field-exact |
 | R3 | `a2b2dd6` | `Config.baseValidation` | `baseValidation(props, keys, spaceAllowedKeys)` — canonicalized whitespace-aware validator, pins `83155b4` fix | 74 | 10 error-list exact |
 | R4 | `7024250` | `SpriteFontGeometry` + `CharacterBounds` + `SpriteFontMetrics` | Pure-data geometry over `Array<IntArray>` ARGB matrix. Carries **M5** (loop index not `indexOf(c)`), **M7** (bounds on `letterIndex`), **C3** (fallback bounds for unknown codepoint) | 93 | 7 byte-exact |
-| R5 | *(in flight)* | `ConfigMessage` | Immutable `data class` + `validate()` + round-trip; reuses `baseValidation` with `spaceAllowedKeys = setOf(KEY_MESSAGE_CONTENT_BREAK)` | pending | pending |
+| R5 | *(this commit)* | `ConfigMessage` + `MessageCasing` + `UsernameCaseResolutionType` | Immutable `data class` + `validate()` + round-trip; reuses `baseValidation` with `spaceAllowedKeys = setOf(KEY_MESSAGE_CONTENT_BREAK)`. Dependent enums ported as Kotlin `enum class` mirroring Java `name()` values. `timeFormatter` (a `java.text.DateFormat`) deliberately elided — the JVM layer remains responsible for turning the raw pattern into a `DateFormat`; commonMain `validate()` only checks presence. §14 garbled Javadoc replaced with a clean doc block. | 120 | 6 field-exact |
 
 Fixes carried natively by the Kotlin ports:
 

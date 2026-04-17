@@ -2,7 +2,10 @@ package com.glitchcog.fontificator.core
 
 import com.glitchcog.fontificator.config.Config as JavaConfig
 import com.glitchcog.fontificator.config.ConfigFont as JavaConfigFont
+import com.glitchcog.fontificator.config.ConfigMessage as JavaConfigMessage
 import com.glitchcog.fontificator.config.FontType as JavaFontType
+import com.glitchcog.fontificator.config.MessageCasing as JavaMessageCasing
+import com.glitchcog.fontificator.config.UsernameCaseResolutionType as JavaUsernameCaseResolutionType
 import com.glitchcog.fontificator.config.FontificatorProperties
 import com.glitchcog.fontificator.config.loadreport.LoadConfigReport
 import com.glitchcog.fontificator.emoji.LazyLoadEmoji
@@ -80,6 +83,31 @@ public object JavaLegacyAdapter {
             charSpacing = javaConfig.charSpacing,
             messageSpacing = javaConfig.messageSpacing,
             fontType = FontType.valueOf(javaConfig.fontType.name),
+        )
+
+    /**
+     * Convert a frozen-Java `ConfigMessage` into the commonMain
+     * immutable [ConfigMessage] by reading every field via Java
+     * getters.  Used by `ConfigMessageJvmParityTest` to drive the
+     * same fixture through both implementations and assert
+     * field-by-field parity.
+     */
+    public fun configMessageFromJava(javaMsg: JavaConfigMessage): ConfigMessage =
+        ConfigMessage(
+            usernameFormat = javaMsg.usernameFormat,
+            timeFormat = javaMsg.timeFormat,
+            messageContentBreak = javaMsg.contentBreaker,
+            queueSize = javaMsg.queueSize,
+            messageSpeed = javaMsg.messageSpeed,
+            expirationTime = javaMsg.expirationTime,
+            includeTimestamps = javaMsg.showTimestamps(),
+            showUsernamesOnMessages = javaMsg.showUsernames(),
+            showJoinMessages = javaMsg.showJoinMessages(),
+            hideEmptyBorder = javaMsg.isHideEmptyBorder,
+            hideEmptyBackground = javaMsg.isHideEmptyBackground,
+            caseResolutionType = UsernameCaseResolutionType.valueOf(javaMsg.caseResolutionType.name),
+            specifyCaseAllowed = javaMsg.isSpecifyCaseAllowed,
+            messageCasing = MessageCasing.valueOf(javaMsg.messageCasing.name),
         )
 
     /**

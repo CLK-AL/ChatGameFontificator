@@ -65,10 +65,10 @@ Critical + five Major bugs all reproducible without a display.
 | S1 | **Red-then-green Critical fixes** (✅ complete) | 3 Kotlin red-tests + 3 Java fixes (C1 `setBaselineOffset`, C2 duplicated `w > 0`, C3 `getCharacterBounds` null). `mvn test` + `./gradlew test` both green. | Swing window stays untouched — it's the future test oracle. |
 | S2 | **Phase B coverage drive** (**next**) | JaCoCo 100 % line + branch on Option-C packages (`com.glitchcog.fontificator.sprite.**` + `.config.**`). Remaining Majors/Minors from `CODE_REVIEW.md` closed. | **Swing `UiDriver` `actual` lands.** Drives `ChatWindow` / `MessagePanel` via off-screen `BufferedImage` + `Graphics2D` + AssertJ-Swing. ARGB hashes committed under `testdata/snapshots/swing/**` — Swing becomes the pinning oracle. |
 | S3 | **Freeze** — tag `legacy-v1` | CODEOWNERS read-only on `src/main/java/**`; CI diff-check guard. | Swing oracle hashes frozen. |
-| S4 | **Phase D** — port to `commonMain` | Per-subsystem Kotlin port (order: `Config.baseValidation` → `ConfigFont` → `SpriteCharacterKey` → `SpriteFont` → `Sprite`). Same Kotlin tests run twice (Java + Kotlin). Kover 100 % + Pitest ≥ 85 % per module. | Swing actual still the only UI. `UiDriver`-driven tests keep passing against Swing regardless of the logic swap underneath. |
+| S4 | **Phase D** (✅ config + geometry complete) — port to `commonMain` | Per-subsystem Kotlin port (order: `Config.baseValidation` → `ConfigFont` → `SpriteCharacterKey` → `SpriteFont` → `Sprite`). Same Kotlin tests run twice (Java + Kotlin). Kover 100 % + Pitest ≥ 85 % per module. | Swing actual still the only UI. `UiDriver`-driven tests keep passing against Swing regardless of the logic swap underneath. |
 | S5 | **Phase E.1** — Compose Desktop host | `ui-compose-desktop` with `Canvas2D` = Skiko `actual`, `ComposeDesktopUiDriver` `actual`. | **Green renderer joins the matrix.** Every `UiDriver` test runs under both Swing (blue) and Compose Desktop (green) with ARGB-hash parity gate. |
 | S6 | **Phase E.2** — Compose Web (wasmJs) | `ui-compose-html` host; `ComposeWebUiDriver` `actual` (Compose test-renderer + Playwright Kotlin nightly ARGB grab). | Three renderers; one suite; one hash set. |
-| S7 | **Phase F** — Dual CI/CD release | `profile=java` → ProGuarded Swing app. `profile=kmp` → klibs, Compose Desktop signed bundle (native-image via `org.graalvm.buildtools.native` 0.10.6), Web site. `verifyProguardedJar` gates both. Swing actual retained for N releases before retirement. | — |
+| S7 | **Phase F** (✅ CI workflows + ProGuard stubs) — Dual CI/CD release | `profile=java` → ProGuarded Swing app. `profile=kmp` → klibs, Compose Desktop signed bundle (native-image via `org.graalvm.buildtools.native` 0.10.6), Web site. `verifyProguardedJar` gates both. Swing actual retained for N releases before retirement. | — |
 
 See [`../fonts-bitsnpicas/docs/diagrams/08-ui-driver-expect-actual.puml`](../fonts-bitsnpicas/docs/diagrams/08-ui-driver-expect-actual.puml)
 — the `UiDriver` architecture is host-wide; this repo's vendored
@@ -132,6 +132,18 @@ geometry layer are ported to `commonMain` pure Kotlin:
 
 **Next milestone**: Stage S5 (Compose Desktop `UiDriver` actual +
 `Canvas2D` abstraction enabling the Sprite renderer port).
+
+### S7 progress: **dual CI workflows + ProGuard stubs landed** ✅
+
+| File | Purpose |
+| --- | --- |
+| `.github/workflows/java.yml` | Legacy: SDKMAN → `./gradlew test jacocoTestReport jacocoTestCoverageVerification` on 3 OSes |
+| `.github/workflows/kmp.yml` | KMP: SDKMAN → `./gradlew :modules:core:check` on 3 OSes |
+| `proguard/proguard-rules-common.pro` | Kotlin metadata, kotlinx, annotations |
+| `proguard/proguard-rules-java.pro` | Keeps `FontificatorMain` + GUI classes |
+| `proguard/proguard-rules-kmp.pro` | `com.glitchcog.fontificator.core.**` |
+
+Commit: `632d285`.
 
 ---
 

@@ -1,0 +1,2 @@
+-keep class com.glitchcog.fontificator.core.** { *; }
+-keep class org.jetbrains.skiko.** { *; }
